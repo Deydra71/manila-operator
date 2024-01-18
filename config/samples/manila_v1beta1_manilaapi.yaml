@@ -4,3 +4,10 @@ metadata:
   name: manilaapi-sample
 spec:
   # TODO(user): Add fields here
+  #tls:
+  #    api:
+  #      internal:
+  #        secretName: cert-manila-internal-svc
+  #      public:
+  #        secretName: cert-manila-public-svc
+  #    caBundleSecretName: combined-ca-bundle

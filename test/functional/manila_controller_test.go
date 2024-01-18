@@ -437,4 +437,61 @@ var _ = Describe("Manila controller", func() {
 			Expect(endpoints).To(HaveKeyWithValue("internal", "http://manila-internal."+manila.Namespace+".svc:8786/v2"))
 		})
 	})
+	When("A Manila with TLS is created", func() {
+		BeforeEach(func() {
+			DeferCleanup(th.DeleteInstance, CreateManila(manilaTest.Instance, GetTLSManilaSpec()))
+			DeferCleanup(k8sClient.Delete, ctx, CreateManilaMessageBusSecret(manilaTest.Instance.Namespace, manilaTest.RabbitmqSecretName))
+			DeferCleanup(th.DeleteInstance, CreateManilaAPI(manilaTest.Instance, GetDefaultManilaAPISpec()))
+			DeferCleanup(th.DeleteInstance, CreateManilaScheduler(manilaTest.Instance, GetDefaultManilaSchedulerSpec()))
+			DeferCleanup(
+				mariadb.DeleteDBService,
+				mariadb.CreateDBService(
+					manilaTest.Instance.Namespace,
+					GetManila(manilaName).Spec.DatabaseInstance,
+					corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{{Port: 3306}},
+					},
+				),
+			)
+			infra.SimulateTransportURLReady(manilaTest.ManilaTransportURL)
+			DeferCleanup(infra.DeleteMemcached, infra.CreateMemcached(namespace, manilaTest.MemcachedInstance, memcachedSpec))
+			infra.SimulateMemcachedReady(manilaTest.ManilaMemcached)
+			DeferCleanup(keystone.DeleteKeystoneAPI, keystone.CreateKeystoneAPI(manilaTest.Instance.Namespace))
+			mariadb.SimulateMariaDBDatabaseCompleted(manilaTest.Instance)
+			th.SimulateJobSuccess(manilaTest.ManilaDBSync)
+		})
+
+		It("Creates ManilaAPI", func() {
+			DeferCleanup(k8sClient.Delete, ctx, th.CreateCABundleSecret(manilaTest.CABundleSecret))
+			DeferCleanup(k8sClient.Delete, ctx, th.CreateCertSecret(manilaTest.InternalCertSecret))
+			DeferCleanup(k8sClient.Delete, ctx, th.CreateCertSecret(manilaTest.PublicCertSecret))
+			//keystone.SimulateKeystoneServiceReady(manilaTest.ManilaKeystoneService)
+			keystone.SimulateKeystoneEndpointReady(manilaTest.ManilaKeystoneEndpoint)
+
+			ManilaAPIExists(manilaTest.Instance)
+
+			d := th.GetStatefulSet(manilaTest.ManilaAPI)
+			// Check the resulting deployment fields
+			Expect(int(*d.Spec.Replicas)).To(Equal(1))
+
+			Expect(d.Spec.Template.Spec.Volumes).To(HaveLen(9))
+			Expect(d.Spec.Template.Spec.Containers).To(HaveLen(2))
+
+			// cert deployment volumes
+			th.AssertVolumeExists(manilaTest.CABundleSecret.Name, d.Spec.Template.Spec.Volumes)
+			th.AssertVolumeExists(manilaTest.InternalCertSecret.Name, d.Spec.Template.Spec.Volumes)
+			th.AssertVolumeExists(manilaTest.PublicCertSecret.Name, d.Spec.Template.Spec.Volumes)
+
+			// cert volumeMounts
+			container := d.Spec.Template.Spec.Containers[1]
+			th.AssertVolumeMountExists(manilaTest.InternalCertSecret.Name, "tls.key", container.VolumeMounts)
+			th.AssertVolumeMountExists(manilaTest.InternalCertSecret.Name, "tls.crt", container.VolumeMounts)
+			th.AssertVolumeMountExists(manilaTest.PublicCertSecret.Name, "tls.key", container.VolumeMounts)
+			th.AssertVolumeMountExists(manilaTest.PublicCertSecret.Name, "tls.crt", container.VolumeMounts)
+			th.AssertVolumeMountExists(manilaTest.CABundleSecret.Name, "tls-ca-bundle.pem", container.VolumeMounts)
+
+			Expect(container.ReadinessProbe.HTTPGet.Scheme).To(Equal(corev1.URISchemeHTTPS))
+			Expect(container.LivenessProbe.HTTPGet.Scheme).To(Equal(corev1.URISchemeHTTPS))
+		})
+	})
 })

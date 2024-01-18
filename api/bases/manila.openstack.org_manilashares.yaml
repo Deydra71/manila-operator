@@ -880,6 +880,11 @@ spec:
               serviceUser:
                 default: manila
                 type: string
+              tls:
+                properties:
+                  caBundleSecretName:
+                    type: string
+                type: object
               transportURLSecret:
                 type: string
             required:

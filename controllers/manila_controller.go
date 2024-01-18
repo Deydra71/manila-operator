@@ -37,6 +37,7 @@ import (
 	nad "github.com/openstack-k8s-operators/lib-common/modules/common/networkattachment"
 	common_rbac "github.com/openstack-k8s-operators/lib-common/modules/common/rbac"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/secret"
+	"github.com/openstack-k8s-operators/lib-common/modules/common/service"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/util"
 	manilav1beta1 "github.com/openstack-k8s-operators/manila-operator/api/v1beta1"
 	"github.com/openstack-k8s-operators/manila-operator/pkg/manila"
@@ -208,6 +209,27 @@ func (r *ManilaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 	// Handle non-deleted clusters
 	return r.reconcileNormal(ctx, instance, helper)
 }
+
+// fields to index to reconcile when change
+const (
+	passwordSecretField     = ".spec.secret"
+	caBundleSecretNameField = ".spec.tls.caBundleSecretName"
+	tlsAPIInternalField     = ".spec.tls.api.internal.secretName"
+	tlsAPIPublicField       = ".spec.tls.api.public.secretName"
+)
+
+var (
+	commonWatchFields = []string{
+		passwordSecretField,
+		caBundleSecretNameField,
+	}
+	manilaAPIWatchFields = []string{
+		passwordSecretField,
+		caBundleSecretNameField,
+		tlsAPIInternalField,
+		tlsAPIPublicField,
+	}
+)
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ManilaReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -872,6 +894,21 @@ func (r *ManilaReconciler) generateServiceConfig(
 		"MemcachedServersWithInet": strings.Join(memcached.Status.ServerListWithInet, ","),
 	}
 
+	// create httpd  vhost template parameters
+	httpdVhostConfig := map[string]interface{}{}
+	for _, endpt := range []service.Endpoint{service.EndpointInternal, service.EndpointPublic} {
+		endptConfig := map[string]interface{}{}
+		endptConfig["ServerName"] = fmt.Sprintf("%s.%s.svc", manila.ServiceName, endpt.String())
+		endptConfig["TLS"] = false // default TLS to false, and set it bellow to true if enabled
+		if instance.Spec.ManilaAPI.TLS.API.Enabled(endpt) {
+			endptConfig["TLS"] = true
+			endptConfig["SSLCertificateFile"] = fmt.Sprintf("/etc/pki/tls/certs/%s.crt", endpt.String())
+			endptConfig["SSLCertificateKeyFile"] = fmt.Sprintf("/etc/pki/tls/private/%s.key", endpt.String())
+		}
+		httpdVhostConfig[endpt.String()] = endptConfig
+	}
+	templateParameters["VHosts"] = httpdVhostConfig
+
 	configTemplates := []util.Template{
 		// ScriptsConfigMap
 		{
@@ -971,6 +1008,7 @@ func (r *ManilaReconciler) schedulerDeploymentCreateOrUpdate(ctx context.Context
 		DatabaseHostname:        instance.Status.DatabaseHostname,
 		TransportURLSecret:      instance.Status.TransportURLSecret,
 		ServiceAccount:          instance.RbacResourceName(),
+		TLS:                     instance.Spec.ManilaAPI.TLS.Ca,
 	}
 
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
@@ -1007,6 +1045,7 @@ func (r *ManilaReconciler) shareDeploymentCreateOrUpdate(ctx context.Context, in
 		DatabaseHostname:    instance.Status.DatabaseHostname,
 		TransportURLSecret:  instance.Status.TransportURLSecret,
 		ServiceAccount:      instance.RbacResourceName(),
+		TLS:                 instance.Spec.ManilaAPI.TLS.Ca,
 	}
 
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
