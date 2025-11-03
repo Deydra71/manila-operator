@@ -26,6 +26,7 @@ import (
 	"fmt"
 
 	topologyv1 "github.com/openstack-k8s-operators/infra-operator/apis/topology/v1beta1"
+	keystonev1 "github.com/openstack-k8s-operators/keystone-operator/api/v1beta1"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/service"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -94,6 +95,10 @@ func (spec *ManilaSpec) Default() {
 			// This is required, as the loop variable is a by-value copy
 			spec.ManilaShares[key] = manilaShare
 		}
+	}
+	// Default ApplicationCredentialSecret to standard AC secret name if not specified
+	if spec.ManilaAPI.Auth.ApplicationCredentialSecret == "" {
+		spec.ManilaAPI.Auth.ApplicationCredentialSecret = keystonev1.GetACSecretName("manila")
 	}
 	spec.ManilaSpecBase.Default()
 

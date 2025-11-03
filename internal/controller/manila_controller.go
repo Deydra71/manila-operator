@@ -234,6 +234,7 @@ const (
 	tlsAPIInternalField     = ".spec.tls.api.internal.secretName"
 	tlsAPIPublicField       = ".spec.tls.api.public.secretName"
 	topologyField           = ".spec.topologyRef.Name"
+	authAppCredSecretField  = ".spec.auth.applicationCredentialSecret" // #nosec G101
 )
 
 var (
@@ -248,6 +249,7 @@ var (
 		tlsAPIInternalField,
 		tlsAPIPublicField,
 		topologyField,
+		authAppCredSecretField,
 	}
 )
 
@@ -1024,6 +1026,27 @@ func (r *ManilaReconciler) generateServiceConfig(
 
 	// Check if Quorum Queues are enabled
 	templateParameters["QuorumQueues"] = transportURLQuorumQueues
+
+	// Check for Application Credentials
+	templateParameters["UseApplicationCredentials"] = false
+	if instance.Spec.ManilaAPI.Auth.ApplicationCredentialSecret != "" {
+		secret := &corev1.Secret{}
+		key := types.NamespacedName{Namespace: instance.Namespace, Name: instance.Spec.ManilaAPI.Auth.ApplicationCredentialSecret}
+		if err := r.Get(ctx, key, secret); err != nil {
+			if !k8s_errors.IsNotFound(err) {
+				h.GetLogger().Error(err, "Failed to get ApplicationCredential secret", "secret", key)
+			}
+		} else {
+			acID, okID := secret.Data[keystonev1.ACIDSecretKey]
+			acSecret, okSecret := secret.Data[keystonev1.ACSecretSecretKey]
+			if okID && len(acID) > 0 && okSecret && len(acSecret) > 0 {
+				templateParameters["UseApplicationCredentials"] = true
+				templateParameters["ApplicationCredentialID"] = string(acID)
+				templateParameters["ApplicationCredentialSecret"] = string(acSecret)
+				h.GetLogger().Info("Using ApplicationCredentials auth", "secret", key)
+			}
+		}
+	}
 
 	// create httpd  vhost template parameters
 	httpdVhostConfig := map[string]any{}
