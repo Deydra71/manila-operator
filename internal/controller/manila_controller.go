@@ -460,6 +460,12 @@ func (r *ManilaReconciler) reconcileDelete(ctx context.Context, instance *manila
 		}
 	}
 
+	// Remove consumer finalizer from the AC secret Manila was consuming.
+	if err := keystonev1.RemoveACSecretConsumerFinalizer(ctx, helper, instance.Namespace,
+		instance.Status.ApplicationCredentialSecret, manila.ACConsumerFinalizer); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Service is deleted so remove the finalizer.
 	controllerutil.RemoveFinalizer(instance, helper.GetFinalizer())
 	Log.Info(fmt.Sprintf("Reconciled Service '%s' delete successfully", instance.Name))
@@ -771,6 +777,15 @@ func (r *ManilaReconciler) reconcileNormal(ctx context.Context, instance *manila
 	// Create Service Config and Secrets - end
 
 	instance.Status.Conditions.MarkTrue(condition.ServiceConfigReadyCondition, condition.ServiceConfigReadyMessage)
+
+	// Manage AC consumer finalizer, the AC data was already read and rendered to the service config
+	if err := keystonev1.ManageACSecretFinalizer(ctx, helper, instance.Namespace,
+		instance.Spec.Auth.ApplicationCredentialSecret,
+		instance.Status.ApplicationCredentialSecret,
+		manila.ACConsumerFinalizer); err != nil {
+		return ctrl.Result{}, err
+	}
+	instance.Status.ApplicationCredentialSecret = instance.Spec.Auth.ApplicationCredentialSecret
 
 	var serviceAnnotations map[string]string
 	// Ensure NAD annotations are generated
